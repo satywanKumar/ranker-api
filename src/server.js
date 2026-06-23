@@ -1,6 +1,4 @@
 import express from 'express';
-import http from 'http';
-import { Server } from 'socket.io';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -29,22 +27,6 @@ dotenv.config();
 connectDB();
 
 const app = express();
-const server = http.createServer(app);
-
-// Socket.io initialization
-const io = new Server(server, {
-  cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    credentials: true,
-  },
-});
-
-// Attach io instance to request object for route-level access
-app.use((req, res, next) => {
-  req.io = io;
-  next();
-});
 
 // CORS settings (placed at the top to avoid preflight issues with rate limiters/headers)
 const allowedOrigins = [
@@ -105,38 +87,13 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/users', userRoutes);
 
-// Socket.io Events
-io.on('connection', (socket) => {
-  console.log(`Socket connected: ${socket.id}`);
 
-  // User joins room based on their ID
-  socket.on('join_user', (userId) => {
-    socket.join(userId);
-    console.log(`User ${userId} joined their personal room`);
-  });
-
-  // User joins room based on their batch
-  socket.on('join_batch', (batchId) => {
-    socket.join(batchId);
-    console.log(`User joined batch room: ${batchId}`);
-  });
-
-  // Admins room
-  socket.on('join_admin', () => {
-    socket.join('admins');
-    console.log('Admin joined admin channel');
-  });
-
-  socket.on('disconnect', () => {
-    console.log(`Socket disconnected: ${socket.id}`);
-  });
-});
 
 // Error handlers
 app.use(notFound);
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log(`Server listening in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
 });
