@@ -31,6 +31,7 @@ const app = express();
 // CORS settings (placed at the top to avoid preflight issues with rate limiters/headers)
 const allowedOrigins = [
   process.env.FRONTEND_URL,
+  'https://ranker.sribsclasses.in',
   'http://localhost:5173',
   'http://localhost:3000',
 ].filter(Boolean).map(url => url.replace(/\/$/, ''));
