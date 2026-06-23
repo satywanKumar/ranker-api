@@ -46,6 +46,28 @@ app.use((req, res, next) => {
   next();
 });
 
+// CORS settings (placed at the top to avoid preflight issues with rate limiters/headers)
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'http://localhost:5173',
+  'http://localhost:3000',
+].filter(Boolean).map(url => url.replace(/\/$/, ''));
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      const sanitizedOrigin = origin.replace(/\/$/, '');
+      if (allowedOrigins.includes(sanitizedOrigin)) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
+    credentials: true,
+  })
+);
+
 // Security headers (allowing cross-origin resource sharing of assets)
 app.use(
   helmet({
@@ -62,14 +84,6 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 app.use('/api/', limiter);
-
-// CORS settings
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-    credentials: true,
-  })
-);
 
 // Body parsers
 app.use(express.json());
