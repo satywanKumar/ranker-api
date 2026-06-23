@@ -105,9 +105,9 @@ export const refreshAccessToken = async (req, res, next) => {
     }
 
     const user = await User.findById(decoded.id);
-    if (!user || user.refreshToken !== refreshToken) {
+    if (!user || !user.refreshToken) {
       res.status(401);
-      throw new Error('Token does not match stored token');
+      throw new Error('Token does not match stored token or user has been logged out');
     }
 
     const newAccessToken = generateAccessToken(user);

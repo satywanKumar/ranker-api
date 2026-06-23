@@ -8,7 +8,7 @@ export const generateAccessToken = (user) => {
   return jwt.sign(
     { id: user._id, role: user.role },
     process.env.JWT_SECRET || 'supersecretaccesskey123!@#',
-    { expiresIn: '1h' }
+    { expiresIn: '7d' }
   );
 };
 
@@ -19,7 +19,7 @@ export const generateRefreshToken = (user) => {
   return jwt.sign(
     { id: user._id },
     process.env.JWT_REFRESH_SECRET || 'supersecretrefreshkey456!@#',
-    { expiresIn: '7d' }
+    { expiresIn: '30d' }
   );
 };
 
