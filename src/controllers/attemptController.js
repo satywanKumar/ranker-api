@@ -4,6 +4,8 @@ import Question from '../models/Question.js';
 import Notification from '../models/Notification.js';
 import User from '../models/User.js';
 import { uploadToCloudinary } from '../config/cloudinary.js';
+import https from 'https';
+import http from 'http';
 
 /**
  * @desc Get student's attempt for a test
@@ -350,33 +352,81 @@ const autoSubmitMCQ = async (attempt, test, res) => {
 };
 
 /**
+ * Helper to fetch HTTP/HTTPS resource and follow redirects recursively
+ */
+const fetchWithRedirects = (url, headers = {}, depth = 0) => {
+  return new Promise((resolve, reject) => {
+    if (depth > 5) {
+      return reject(new Error('Too many redirects'));
+    }
+    const client = url.startsWith('https') ? https : http;
+    const requestOptions = {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        ...headers
+      }
+    };
+
+    client.get(url, requestOptions, (response) => {
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        let redirectUrl = response.headers.location;
+        if (!redirectUrl.startsWith('http://') && !redirectUrl.startsWith('https://')) {
+          const parsedUrl = new URL(url);
+          redirectUrl = new URL(redirectUrl, parsedUrl.origin).href;
+        }
+        return fetchWithRedirects(redirectUrl, headers, depth + 1).then(resolve).catch(reject);
+      }
+      resolve(response);
+    }).on('error', reject);
+  });
+};
+
+/**
  * @desc Proxy subjective PDF download to bypass CORS
  * @route GET /api/attempts/proxy-pdf?url=...
  */
 export const proxyPDF = async (req, res, next) => {
   try {
-    const pdfUrl = req.query.url;
+    let pdfUrl = req.query.url;
     if (!pdfUrl) {
       res.status(400);
       throw new Error('URL query parameter is required');
     }
 
-    if (!pdfUrl.startsWith('https://res.cloudinary.com/')) {
+    // Decode URL from base64 if it does not start with http:// or https:// (backward compatible)
+    if (!pdfUrl.startsWith('http://') && !pdfUrl.startsWith('https://')) {
+      try {
+        pdfUrl = Buffer.from(pdfUrl, 'base64').toString('utf-8');
+      } catch (err) {
+        res.status(400);
+        throw new Error('Invalid encoded URL');
+      }
+    }
+
+    if (!pdfUrl.startsWith('https://res.cloudinary.com/') && !pdfUrl.startsWith('http://res.cloudinary.com/')) {
       res.status(400);
       throw new Error('Invalid URL source');
     }
 
-    const response = await fetch(pdfUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch PDF: ${response.statusText}`);
-    }
+    fetchWithRedirects(pdfUrl)
+      .then((pdfResponse) => {
+        if (pdfResponse.statusCode !== 200) {
+          return res.status(pdfResponse.statusCode || 500).json({
+            message: `Failed to fetch PDF: Status ${pdfResponse.statusCode}`
+          });
+        }
 
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Length', buffer.length);
-    res.send(buffer);
+        res.setHeader('Content-Type', 'application/pdf');
+        if (pdfResponse.headers['content-length']) {
+          res.setHeader('Content-Length', pdfResponse.headers['content-length']);
+        }
+        res.setHeader('Content-Disposition', 'inline; filename="answer.pdf"');
+        pdfResponse.pipe(res);
+      })
+      .catch((err) => {
+        console.error('PDF proxy error:', err);
+        res.status(500).json({ message: err.message });
+      });
   } catch (error) {
     next(error);
   }
