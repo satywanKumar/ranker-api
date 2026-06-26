@@ -270,3 +270,94 @@ export const getAdminAnalytics = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * @desc Get complete analytics and test records for a specific student (Admin Only)
+ * @route GET /api/analytics/admin/student/:studentId
+ */
+export const getStudentAnalyticsForAdmin = async (req, res, next) => {
+  try {
+    const { studentId } = req.params;
+    const student = await User.findById(studentId).populate('batch', 'name');
+    if (!student) {
+      res.status(404);
+      throw new Error('Student not found');
+    }
+
+    // Fetch all attempts for this student
+    const attempts = await Attempt.find({ student: studentId })
+      .populate('test', 'name totalMarks type duration')
+      .sort({ createdAt: -1 });
+
+    const history = [];
+    for (const att of attempts) {
+      const isCompleted = att.status === 'submitted' || att.status === 'graded';
+      
+      let rankInTest = '--';
+      if (isCompleted && att.test) {
+        const higherAttemptsCount = await Attempt.countDocuments({
+          test: att.test._id,
+          status: { $in: ['submitted', 'graded'] },
+          marksObtained: { $gt: att.marksObtained }
+        });
+        rankInTest = higherAttemptsCount + 1;
+      }
+
+      history.push({
+        attemptId: att._id,
+        testId: att.test?._id || '',
+        testName: att.test?.name || 'Deleted Test',
+        testType: att.test?.type || 'mcq',
+        marksObtained: att.marksObtained,
+        totalMarks: att.test?.totalMarks || 100,
+        percentage: att.test?.totalMarks ? Number(((att.marksObtained / att.test.totalMarks) * 100).toFixed(1)) : 0,
+        badge: att.badge,
+        status: att.status,
+        startTime: att.startTime,
+        submittedAt: att.submittedAt,
+        timeTaken: att.submittedAt && att.startTime 
+          ? Math.floor((new Date(att.submittedAt) - new Date(att.startTime)) / 1000) // in seconds
+          : null,
+        rankInTest,
+        date: att.submittedAt || att.createdAt,
+      });
+    }
+
+    // Sort by date ascending for progress trend
+    const progress = [...history]
+      .filter(h => h.status === 'submitted' || h.status === 'graded')
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    // Overall summary metrics
+    const completedAttempts = history.filter(h => h.status === 'submitted' || h.status === 'graded');
+    const completedCount = completedAttempts.length;
+    
+    let totalPercent = 0;
+    let highestScore = 0;
+    let lowestScore = 100;
+    
+    completedAttempts.forEach(h => {
+      totalPercent += h.percentage;
+      if (h.percentage > highestScore) highestScore = h.percentage;
+      if (h.percentage < lowestScore) lowestScore = h.percentage;
+    });
+
+    if (completedCount === 0) lowestScore = 0;
+
+    const avgScore = completedCount > 0 ? Number((totalPercent / completedCount).toFixed(1)) : 0;
+
+    res.json({
+      student,
+      summary: {
+        completedTests: completedCount,
+        avgScore,
+        highestScore: Number(highestScore.toFixed(1)),
+        lowestScore: Number(lowestScore.toFixed(1)),
+      },
+      history,
+      progress,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
