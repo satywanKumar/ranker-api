@@ -8,6 +8,8 @@ import {
   getSubjectiveSubmissions,
   gradeSubjectiveAttempt,
   proxyPDF,
+  deleteAttempt,
+  deleteAllAttemptsForTest,
 } from '../controllers/attemptController.js';
 import { protect, adminOnly } from '../middleware/auth.js';
 import upload from '../middleware/multer.js';
@@ -34,5 +36,7 @@ router.post(
 // Admin grading & evaluation endpoints
 router.get('/test/:testId/evaluation', protect, adminOnly, getSubjectiveSubmissions);
 router.post('/:id/grade', protect, adminOnly, gradeSubjectiveAttempt);
+router.delete('/:id', protect, adminOnly, deleteAttempt);
+router.delete('/test/:testId/all', protect, adminOnly, deleteAllAttemptsForTest);
 
 export default router;

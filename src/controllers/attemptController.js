@@ -3,7 +3,7 @@ import Test from '../models/Test.js';
 import Question from '../models/Question.js';
 import Notification from '../models/Notification.js';
 import User from '../models/User.js';
-import { uploadToCloudinary } from '../config/cloudinary.js';
+import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary.js';
 import https from 'https';
 import http from 'http';
 
@@ -13,8 +13,12 @@ import http from 'http';
  */
 export const getStudentAttempt = async (req, res, next) => {
   try {
+    let studentId = req.user._id;
+    if (req.user.role === 'admin' && req.query.studentId) {
+      studentId = req.query.studentId;
+    }
     const attempt = await Attempt.findOne({
-      student: req.user._id,
+      student: studentId,
       test: req.params.testId,
     });
     res.json(attempt);
@@ -234,15 +238,15 @@ export const submitSubjectivePDF = async (req, res, next) => {
 };
 
 /**
- * @desc Get subjective test submissions for grading (Admin)
+ * @desc Get subjective/MCQ test submissions for grading (Admin)
  * @route GET /api/attempts/test/:testId/evaluation
  */
 export const getSubjectiveSubmissions = async (req, res, next) => {
   try {
     const test = await Test.findById(req.params.testId);
-    if (!test || test.type !== 'subjective') {
-      res.status(400);
-      throw new Error('Invalid test ID or test is MCQ');
+    if (!test) {
+      res.status(404);
+      throw new Error('Test not found');
     }
 
     const submissions = await Attempt.find({ test: test._id })
@@ -250,6 +254,57 @@ export const getSubjectiveSubmissions = async (req, res, next) => {
       .sort({ submittedAt: 1 });
 
     res.json(submissions);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc Delete student test attempt (Admin)
+ * @route DELETE /api/attempts/:id
+ */
+export const deleteAttempt = async (req, res, next) => {
+  try {
+    const attempt = await Attempt.findById(req.params.id);
+    if (!attempt) {
+      res.status(404);
+      throw new Error('Attempt not found');
+    }
+
+    if (attempt.subjectiveAnswerUrl) {
+      await deleteFromCloudinary(attempt.subjectiveAnswerUrl, 'raw');
+    }
+    if (attempt.subjectiveCheckedUrl) {
+      await deleteFromCloudinary(attempt.subjectiveCheckedUrl, 'raw');
+    }
+
+    await attempt.deleteOne();
+    res.json({ message: 'Attempt deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc Delete all attempts for a test (Admin)
+ * @route DELETE /api/attempts/test/:testId/all
+ */
+export const deleteAllAttemptsForTest = async (req, res, next) => {
+  try {
+    const testId = req.params.testId;
+    const attempts = await Attempt.find({ test: testId });
+
+    for (const attempt of attempts) {
+      if (attempt.subjectiveAnswerUrl) {
+        await deleteFromCloudinary(attempt.subjectiveAnswerUrl, 'raw');
+      }
+      if (attempt.subjectiveCheckedUrl) {
+        await deleteFromCloudinary(attempt.subjectiveCheckedUrl, 'raw');
+      }
+    }
+
+    await Attempt.deleteMany({ test: testId });
+    res.json({ message: 'All attempts for this test have been deleted' });
   } catch (error) {
     next(error);
   }

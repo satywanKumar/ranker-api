@@ -46,8 +46,13 @@ export const updateUser = async (req, res, next) => {
       user.batch = req.body.batch;
     }
 
+    // Reset password if provided
+    if (req.body.password) {
+      user.password = req.body.password;
+    }
+
     const updatedUser = await user.save();
-    const populatedUser = await User.findById(populatedUser._id).populate('batch', 'name');
+    const populatedUser = await User.findById(updatedUser._id).populate('batch', 'name');
     res.json(populatedUser);
   } catch (error) {
     next(error);
