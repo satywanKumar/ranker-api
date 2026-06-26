@@ -420,7 +420,13 @@ export const proxyPDF = async (req, res, next) => {
         if (pdfResponse.headers['content-length']) {
           res.setHeader('Content-Length', pdfResponse.headers['content-length']);
         }
-        res.setHeader('Content-Disposition', 'inline; filename="answer.pdf"');
+        if (req.query.download === 'true') {
+          const rawFilename = req.query.filename || 'question_paper.pdf';
+          const sanitizedFilename = rawFilename.replace(/[^a-zA-Z0-9_.-]/g, '_');
+          res.setHeader('Content-Disposition', `attachment; filename="${sanitizedFilename}"`);
+        } else {
+          res.setHeader('Content-Disposition', 'inline; filename="answer.pdf"');
+        }
         pdfResponse.pipe(res);
       })
       .catch((err) => {
