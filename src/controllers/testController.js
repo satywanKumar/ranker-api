@@ -104,6 +104,7 @@ export const createTest = async (req, res, next) => {
       type,
       batch,
       deadline,
+      questionPaperUrl,
     } = req.body;
 
     const test = await Test.create({
@@ -116,6 +117,7 @@ export const createTest = async (req, res, next) => {
       type,
       batch,
       deadline: deadline || null,
+      questionPaperUrl: type === 'subjective' ? questionPaperUrl : undefined,
     });
 
     res.status(201).json(test);
