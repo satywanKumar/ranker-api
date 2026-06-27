@@ -31,6 +31,7 @@ export const getBatches = async (req, res, next) => {
             role: 'student',
           }).select('name email avatar');
         }
+        console.log('Batch:', batch.name, 'req.user.role:', req.user.role, 'studentCount:', studentCount, 'students length:', students.length, 'students:', students);
         return {
           ...batch.toObject(),
           studentCount,
