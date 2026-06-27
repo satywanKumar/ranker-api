@@ -23,9 +23,18 @@ export const getBatches = async (req, res, next) => {
           status: 'approved',
           role: 'student',
         });
+        let students = [];
+        if (req.user.role === 'admin') {
+          students = await User.find({
+            batch: batch._id,
+            status: 'approved',
+            role: 'student',
+          }).select('name email avatar');
+        }
         return {
           ...batch.toObject(),
           studentCount,
+          students,
         };
       })
     );
