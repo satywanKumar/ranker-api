@@ -14,7 +14,7 @@ const attemptSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['mcq', 'subjective'],
+      enum: ['mcq', 'subjective', 'coding'],
       required: true,
     },
     // MCQ answers: questionId (string) -> selected index (number)
@@ -36,6 +36,16 @@ const attemptSchema = new mongoose.Schema(
     annotations: {
       type: Array, // Stores coordinates, ticks, textboxes, lines, pages, colors
       default: [],
+    },
+    // Coding submissions: questionId (string) -> coding answer metadata
+    codingSubmissions: {
+      type: Map,
+      of: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+    tabSwitchCount: {
+      type: Number,
+      default: 0,
     },
     status: {
       type: String,

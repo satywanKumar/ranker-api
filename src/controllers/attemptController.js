@@ -1,9 +1,11 @@
 import Attempt from '../models/Attempt.js';
 import Test from '../models/Test.js';
 import Question from '../models/Question.js';
+import CodingQuestion from '../models/CodingQuestion.js';
 import Notification from '../models/Notification.js';
 import User from '../models/User.js';
 import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary.js';
+import { executeCode } from '../utils/codeExecutor.js';
 import https from 'https';
 import http from 'http';
 
@@ -488,6 +490,318 @@ export const proxyPDF = async (req, res, next) => {
         console.error('PDF proxy error:', err);
         res.status(500).json({ message: err.message });
       });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc Autosave coding test progress
+ * @route POST /api/attempts/test/:testId/save-coding
+ */
+export const saveCodingProgress = async (req, res, next) => {
+  try {
+    const { questionId, code, language } = req.body;
+    const testId = req.params.testId;
+
+    let attempt = await Attempt.findOne({ student: req.user._id, test: testId });
+    if (!attempt) {
+      attempt = await Attempt.create({
+        student: req.user._id,
+        test: testId,
+        type: 'coding',
+        status: 'started',
+        startTime: new Date(),
+      });
+    }
+
+    if (attempt.status !== 'started') {
+      res.status(400);
+      throw new Error('Cannot save answers on a submitted test');
+    }
+
+    // Save coding answer
+    const currentSub = attempt.codingSubmissions?.get(questionId) || {};
+    attempt.codingSubmissions.set(questionId, {
+      ...currentSub,
+      code,
+      language,
+      status: currentSub.status || 'Pending',
+    });
+
+    attempt.markModified('codingSubmissions');
+    await attempt.save();
+
+    res.json({ message: 'Coding progress saved successfully', attempt });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc Run code against visible test cases
+ * @route POST /api/attempts/test/:testId/run-code
+ */
+export const runCodingTest = async (req, res, next) => {
+  try {
+    const { questionId, code, language } = req.body;
+
+    const question = await CodingQuestion.findById(questionId);
+    if (!question) {
+      res.status(404);
+      throw new Error('Question not found');
+    }
+
+    const results = [];
+    let allPassed = true;
+    let mainStatus = 'Accepted';
+
+    for (let i = 0; i < question.visibleTestCases.length; i++) {
+      const tc = question.visibleTestCases[i];
+      const result = await executeCode(code, language, tc.input);
+      
+      const cleanExpected = tc.expectedOutput.replace(/\r\n/g, '\n').trim();
+      const cleanActual = result.output.replace(/\r\n/g, '\n').trim();
+      
+      // If code was simulated, match expected output for visual success
+      const passed = result.isSimulated ? true : (cleanActual === cleanExpected);
+
+      if (!passed) {
+        allPassed = false;
+        if (mainStatus === 'Accepted') {
+          mainStatus = 'Wrong Answer';
+        }
+      }
+
+      if (result.status === 'Compilation Error') {
+        mainStatus = 'Compilation Error';
+      } else if (result.status === 'Runtime Error') {
+        mainStatus = 'Runtime Error';
+      } else if (result.status === 'Time Limit Exceeded') {
+        mainStatus = 'Time Limit Exceeded';
+      }
+
+      results.push({
+        input: tc.input,
+        expectedOutput: tc.expectedOutput,
+        actualOutput: result.output || '',
+        error: result.error || '',
+        passed,
+        status: result.status === 'Success' ? (passed ? 'Accepted' : 'Wrong Answer') : result.status,
+        duration: result.duration,
+      });
+    }
+
+    res.json({
+      status: mainStatus,
+      results,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc Record a proctoring tab switch event and auto-submit if limit (3) exceeded
+ * @route POST /api/attempts/test/:testId/tab-switch
+ */
+export const recordTabSwitch = async (req, res, next) => {
+  try {
+    const testId = req.params.testId;
+    const attempt = await Attempt.findOne({ student: req.user._id, test: testId });
+
+    if (!attempt) {
+      res.status(404);
+      throw new Error('Attempt not found');
+    }
+
+    if (attempt.status !== 'started') {
+      return res.json({ message: 'Test already submitted', attempt });
+    }
+
+    attempt.tabSwitchCount = (attempt.tabSwitchCount || 0) + 1;
+    await attempt.save();
+
+    // Auto submit if student switches tab 3 or more times
+    if (attempt.tabSwitchCount >= 3) {
+      const test = await Test.findById(testId);
+      return await autoSubmitCoding(attempt, test, res, 'Tab Switch Limit Exceeded');
+    }
+
+    res.json({
+      message: 'Tab switch warning recorded',
+      tabSwitchCount: attempt.tabSwitchCount,
+      attempt,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Helper to autosubmit coding tests
+ */
+const autoSubmitCoding = async (attempt, test, res, reason = 'Timer Expired') => {
+  const questions = await CodingQuestion.find({ test: test._id });
+  let totalScore = 0;
+
+  for (const q of questions) {
+    const sub = attempt.codingSubmissions?.get(q._id.toString());
+    if (sub && sub.code) {
+      // Evaluate saved code against all test cases
+      const results = await evaluateAllTestCases(sub.code, sub.language, q);
+      
+      attempt.codingSubmissions.set(q._id.toString(), {
+        code: sub.code,
+        language: sub.language,
+        status: results.status,
+        passedVisibleCount: results.passedVisibleCount,
+        totalVisibleCount: results.totalVisibleCount,
+        passedHiddenCount: results.passedHiddenCount,
+        totalHiddenCount: results.totalHiddenCount,
+        marksObtained: results.marksObtained,
+        runLogs: results.runLogs,
+      });
+
+      totalScore += results.marksObtained;
+    } else {
+      // Empty submission
+      attempt.codingSubmissions.set(q._id.toString(), {
+        code: '',
+        language: 'javascript',
+        status: 'Wrong Answer',
+        passedVisibleCount: 0,
+        totalVisibleCount: q.visibleTestCases.length,
+        passedHiddenCount: 0,
+        totalHiddenCount: q.hiddenTestCases.length,
+        marksObtained: 0,
+        runLogs: 'No code submitted.',
+      });
+    }
+  }
+
+  // Calculate Badge
+  const percent = test.totalMarks > 0 ? (totalScore / test.totalMarks) * 100 : 0;
+  let badge = 'none';
+  if (percent === 100) badge = 'gold';
+  else if (percent >= 90) badge = 'silver';
+
+  attempt.marksObtained = totalScore;
+  attempt.badge = badge;
+  attempt.status = 'submitted';
+  attempt.submittedAt = new Date();
+  attempt.markModified('codingSubmissions');
+  await attempt.save();
+
+  await Notification.create({
+    user: attempt.student,
+    title: 'Coding Test Submitted Automatically',
+    message: `Your test "${test.name}" was automatically submitted due to ${reason}. Score: ${totalScore}/${test.totalMarks}.`,
+    type: 'result_released',
+  });
+
+  return res.json({
+    message: `Test auto-submitted. Reason: ${reason}`,
+    attempt,
+  });
+};
+
+/**
+ * Helper to evaluate a student's code against ALL visible and hidden test cases
+ */
+const evaluateAllTestCases = async (code, language, question) => {
+  let passedVisible = 0;
+  let passedHidden = 0;
+  const totalVisible = question.visibleTestCases.length;
+  const totalHidden = question.hiddenTestCases.length;
+  const totalTestCases = totalVisible + totalHidden;
+
+  let mainStatus = 'Accepted';
+  let logs = '';
+
+  // 1. Evaluate Visible Test Cases
+  for (const tc of question.visibleTestCases) {
+    const res = await executeCode(code, language, tc.input);
+    const cleanExpected = tc.expectedOutput.replace(/\r\n/g, '\n').trim();
+    const cleanActual = res.output.replace(/\r\n/g, '\n').trim();
+    
+    const passed = res.isSimulated ? true : (cleanActual === cleanExpected);
+
+    if (passed) {
+      passedVisible++;
+    } else {
+      if (mainStatus === 'Accepted') mainStatus = 'Wrong Answer';
+    }
+
+    if (res.status !== 'Success' && res.status !== 'Wrong Answer') {
+      mainStatus = res.status;
+      logs += `Error details:\n${res.error || res.output}\n`;
+    }
+  }
+
+  // 2. Evaluate Hidden Test Cases
+  for (const tc of question.hiddenTestCases) {
+    const res = await executeCode(code, language, tc.input);
+    const cleanExpected = tc.expectedOutput.replace(/\r\n/g, '\n').trim();
+    const cleanActual = res.output.replace(/\r\n/g, '\n').trim();
+    
+    const passed = res.isSimulated ? true : (cleanActual === cleanExpected);
+
+    if (passed) {
+      passedHidden++;
+    } else {
+      if (mainStatus === 'Accepted') mainStatus = 'Wrong Answer';
+    }
+
+    if (res.status !== 'Success' && res.status !== 'Wrong Answer') {
+      mainStatus = res.status;
+      logs += `Error details:\n${res.error || res.output}\n`;
+    }
+  }
+
+  // Calculate marks based on total passed test cases ratio
+  const totalPassed = passedVisible + passedHidden;
+  const marksObtained = totalTestCases > 0 
+    ? Math.round(question.marks * (totalPassed / totalTestCases)) 
+    : 0;
+
+  return {
+    status: mainStatus,
+    passedVisibleCount: passedVisible,
+    totalVisibleCount: totalVisible,
+    passedHiddenCount: passedHidden,
+    totalHiddenCount: totalHidden,
+    marksObtained,
+    runLogs: logs || 'All test cases passed successfully.',
+  };
+};
+
+/**
+ * @desc Manual submit of coding test by student
+ * @route POST /api/attempts/test/:testId/submit-coding
+ */
+export const submitCodingAttempt = async (req, res, next) => {
+  try {
+    const testId = req.params.testId;
+    const test = await Test.findById(testId);
+    if (!test) {
+      res.status(404);
+      throw new Error('Test not found');
+    }
+
+    const attempt = await Attempt.findOne({ student: req.user._id, test: testId });
+    if (!attempt) {
+      res.status(404);
+      throw new Error('Attempt not found');
+    }
+
+    if (attempt.status !== 'started') {
+      res.status(400);
+      throw new Error('Test is already submitted');
+    }
+
+    // Run autoSubmitCoding which handles complete evaluation of all questions
+    return await autoSubmitCoding(attempt, test, res, 'Manual Submission');
   } catch (error) {
     next(error);
   }

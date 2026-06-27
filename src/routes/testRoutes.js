@@ -12,6 +12,12 @@ import {
   deleteQuestion,
   reorderQuestions,
   duplicateQuestion,
+  getCodingQuestionsByTest,
+  addCodingQuestion,
+  updateCodingQuestion,
+  deleteCodingQuestion,
+  reorderCodingQuestions,
+  duplicateCodingQuestion,
 } from '../controllers/testController.js';
 import { protect, adminOnly } from '../middleware/auth.js';
 import upload from '../middleware/multer.js';
@@ -44,5 +50,17 @@ router
   .delete(protect, adminOnly, deleteQuestion);
 
 router.post('/:id/questions/:questionId/duplicate', protect, adminOnly, duplicateQuestion);
+
+// Coding Question Builder Routes
+router.get('/:id/coding-questions', protect, getCodingQuestionsByTest);
+router.post('/:id/coding-questions', protect, adminOnly, addCodingQuestion);
+router.put('/:id/coding-questions/reorder', protect, adminOnly, reorderCodingQuestions);
+
+router
+  .route('/:id/coding-questions/:questionId')
+  .put(protect, adminOnly, updateCodingQuestion)
+  .delete(protect, adminOnly, deleteCodingQuestion);
+
+router.post('/:id/coding-questions/:questionId/duplicate', protect, adminOnly, duplicateCodingQuestion);
 
 export default router;

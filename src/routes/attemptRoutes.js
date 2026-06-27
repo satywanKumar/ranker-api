@@ -10,6 +10,10 @@ import {
   proxyPDF,
   deleteAttempt,
   deleteAllAttemptsForTest,
+  saveCodingProgress,
+  runCodingTest,
+  submitCodingAttempt,
+  recordTabSwitch,
 } from '../controllers/attemptController.js';
 import { protect, adminOnly } from '../middleware/auth.js';
 import upload from '../middleware/multer.js';
@@ -21,6 +25,12 @@ router.get('/test/:testId', protect, getStudentAttempt);
 router.post('/test/:testId/start', protect, startAttempt);
 router.post('/test/:testId/save', protect, saveAttemptProgress);
 router.post('/test/:testId/submit', protect, submitAttempt);
+
+// Student coding test progress endpoints
+router.post('/test/:testId/save-coding', protect, saveCodingProgress);
+router.post('/test/:testId/run-code', protect, runCodingTest);
+router.post('/test/:testId/submit-coding', protect, submitCodingAttempt);
+router.post('/test/:testId/tab-switch', protect, recordTabSwitch);
 
 // PDF Proxy endpoint (bypass CORS)
 router.get('/proxy-pdf', protect, proxyPDF);

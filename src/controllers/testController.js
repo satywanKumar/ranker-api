@@ -1,5 +1,6 @@
 import Test from '../models/Test.js';
 import Question from '../models/Question.js';
+import CodingQuestion from '../models/CodingQuestion.js';
 import Attempt from '../models/Attempt.js';
 import Notification from '../models/Notification.js';
 import User from '../models/User.js';
@@ -65,20 +66,34 @@ export const getTestById = async (req, res, next) => {
       throw new Error('Unauthorized access to this test');
     }
 
-    // Retrieve questions sorted by order
-    let questions = await Question.find({ test: test._id }).sort({ order: 1 });
-
-    // SECURITY CHECK: Strip correct answers if user is student and test is ongoing/unsubmitted
-    if (req.user.role !== 'admin') {
-      const attempt = await Attempt.findOne({ student: req.user._id, test: test._id });
-      const isCompleted = attempt && (attempt.status === 'submitted' || attempt.status === 'graded');
+    // Retrieve questions sorted by order depending on test type
+    let questions = [];
+    if (test.type === 'coding') {
+      questions = await CodingQuestion.find({ test: test._id }).sort({ order: 1 });
       
-      if (!isCompleted) {
+      // SECURITY CHECK: Strip hidden test cases for students
+      if (req.user.role !== 'admin') {
         questions = questions.map((q) => {
           const qObj = q.toObject();
-          delete qObj.correctAnswer; // Remove answers from API payload
+          delete qObj.hiddenTestCases; // Hide hidden test cases from API payload
           return qObj;
         });
+      }
+    } else {
+      questions = await Question.find({ test: test._id }).sort({ order: 1 });
+
+      // SECURITY CHECK: Strip correct answers if user is student and test is ongoing/unsubmitted
+      if (req.user.role !== 'admin') {
+        const attempt = await Attempt.findOne({ student: req.user._id, test: test._id });
+        const isCompleted = attempt && (attempt.status === 'submitted' || attempt.status === 'graded');
+        
+        if (!isCompleted) {
+          questions = questions.map((q) => {
+            const qObj = q.toObject();
+            delete qObj.correctAnswer; // Remove answers from API payload
+            return qObj;
+          });
+        }
       }
     }
 
@@ -105,6 +120,9 @@ export const createTest = async (req, res, next) => {
       batch,
       deadline,
       questionPaperUrl,
+      startDate,
+      passingMarks,
+      instructions,
     } = req.body;
 
     const test = await Test.create({
@@ -118,6 +136,9 @@ export const createTest = async (req, res, next) => {
       batch,
       deadline: deadline || null,
       questionPaperUrl: type === 'subjective' ? questionPaperUrl : undefined,
+      startDate: startDate || new Date(),
+      passingMarks: Number(passingMarks) || 0,
+      instructions: instructions || '',
     });
 
     res.status(201).json(test);
@@ -149,6 +170,11 @@ export const updateTest = async (req, res, next) => {
     test.negativeMarking = req.body.negativeMarking !== undefined ? req.body.negativeMarking : test.negativeMarking;
     test.status = req.body.status || test.status;
     test.deadline = req.body.deadline || test.deadline;
+    
+    // Coding fields
+    if (req.body.startDate !== undefined) test.startDate = req.body.startDate;
+    if (req.body.passingMarks !== undefined) test.passingMarks = req.body.passingMarks;
+    if (req.body.instructions !== undefined) test.instructions = req.body.instructions;
 
     if (test.type === 'subjective' && req.body.questionPaperUrl) {
       test.questionPaperUrl = req.body.questionPaperUrl;
@@ -431,6 +457,206 @@ export const duplicateQuestion = async (req, res, next) => {
       marks: original.marks,
       negativeMarks: original.negativeMarks,
       order: original.order + 1, // Will insert next to it
+    });
+
+    res.status(201).json(question);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc Get all coding questions for a test
+ * @route GET /api/tests/:id/coding-questions
+ */
+export const getCodingQuestionsByTest = async (req, res, next) => {
+  try {
+    const testId = req.params.id;
+    const questions = await CodingQuestion.find({ test: testId }).sort({ order: 1 });
+    res.json(questions);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc Add a coding question
+ * @route POST /api/tests/:id/coding-questions
+ */
+export const addCodingQuestion = async (req, res, next) => {
+  try {
+    const testId = req.params.id;
+    const {
+      title,
+      problemStatement,
+      constraints,
+      inputFormat,
+      outputFormat,
+      sampleInput,
+      sampleOutput,
+      explanation,
+      difficulty,
+      marks,
+      hiddenTestCases,
+      visibleTestCases,
+      questionType,
+      supportedLanguages,
+      starterCode,
+    } = req.body;
+
+    const test = await Test.findById(testId);
+    if (!test) {
+      res.status(404);
+      throw new Error('Test not found');
+    }
+
+    const lastQuestion = await CodingQuestion.findOne({ test: testId }).sort({ order: -1 });
+    const order = lastQuestion ? lastQuestion.order + 1 : 0;
+
+    const question = await CodingQuestion.create({
+      test: testId,
+      title: title || 'New Coding Problem',
+      problemStatement: problemStatement || 'Problem statement here...',
+      constraints: constraints || '',
+      inputFormat: inputFormat || '',
+      outputFormat: outputFormat || '',
+      sampleInput: sampleInput || '',
+      sampleOutput: sampleOutput || '',
+      explanation: explanation || '',
+      difficulty: difficulty || 'Medium',
+      marks: Number(marks) || 10,
+      hiddenTestCases: hiddenTestCases || [],
+      visibleTestCases: visibleTestCases || [],
+      questionType: questionType || 'Code Writing',
+      supportedLanguages: supportedLanguages || ['javascript', 'python', 'c', 'cpp', 'java'],
+      starterCode: starterCode || {},
+      order,
+    });
+
+    res.status(201).json(question);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc Update a coding question
+ * @route PUT /api/tests/:id/coding-questions/:questionId
+ */
+export const updateCodingQuestion = async (req, res, next) => {
+  try {
+    const question = await CodingQuestion.findById(req.params.questionId);
+    if (!question) {
+      res.status(404);
+      throw new Error('Coding question not found');
+    }
+
+    const fields = [
+      'title',
+      'problemStatement',
+      'constraints',
+      'inputFormat',
+      'outputFormat',
+      'sampleInput',
+      'sampleOutput',
+      'explanation',
+      'difficulty',
+      'marks',
+      'hiddenTestCases',
+      'visibleTestCases',
+      'questionType',
+      'supportedLanguages',
+      'starterCode',
+    ];
+
+    fields.forEach((field) => {
+      if (req.body[field] !== undefined) {
+        question[field] = req.body[field];
+      }
+    });
+
+    const updated = await question.save();
+    res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc Delete a coding question
+ * @route DELETE /api/tests/:id/coding-questions/:questionId
+ */
+export const deleteCodingQuestion = async (req, res, next) => {
+  try {
+    const question = await CodingQuestion.findById(req.params.questionId);
+    if (!question) {
+      res.status(404);
+      throw new Error('Coding question not found');
+    }
+
+    await question.deleteOne();
+    res.json({ message: 'Coding question removed successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc Reorder coding questions
+ * @route PUT /api/tests/:id/coding-questions/reorder
+ */
+export const reorderCodingQuestions = async (req, res, next) => {
+  try {
+    const { questionIds } = req.body;
+    if (!Array.isArray(questionIds)) {
+      res.status(400);
+      throw new Error('questionIds array is required');
+    }
+
+    const bulkOps = questionIds.map((id, index) => ({
+      updateOne: {
+        filter: { _id: id, test: req.params.id },
+        update: { order: index },
+      },
+    }));
+
+    await CodingQuestion.bulkWrite(bulkOps);
+    res.json({ message: 'Coding questions reordered successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc Duplicate a coding question
+ * @route POST /api/tests/:id/coding-questions/:questionId/duplicate
+ */
+export const duplicateCodingQuestion = async (req, res, next) => {
+  try {
+    const original = await CodingQuestion.findById(req.params.questionId);
+    if (!original) {
+      res.status(404);
+      throw new Error('Coding question to duplicate not found');
+    }
+
+    const question = await CodingQuestion.create({
+      test: original.test,
+      title: `${original.title} (Copy)`,
+      problemStatement: original.problemStatement,
+      constraints: original.constraints,
+      inputFormat: original.inputFormat,
+      outputFormat: original.outputFormat,
+      sampleInput: original.sampleInput,
+      sampleOutput: original.sampleOutput,
+      explanation: original.explanation,
+      difficulty: original.difficulty,
+      marks: original.marks,
+      hiddenTestCases: original.hiddenTestCases,
+      visibleTestCases: original.visibleTestCases,
+      questionType: original.questionType,
+      supportedLanguages: original.supportedLanguages,
+      starterCode: original.starterCode || {},
+      order: original.order + 1,
     });
 
     res.status(201).json(question);

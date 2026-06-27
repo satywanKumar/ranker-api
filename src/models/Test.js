@@ -29,7 +29,7 @@ const testSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['mcq', 'subjective'],
+      enum: ['mcq', 'subjective', 'coding'],
       required: [true, 'Test type is required'],
     },
     batch: {
@@ -49,6 +49,19 @@ const testSchema = new mongoose.Schema(
     },
     deadline: {
       type: Date,
+    },
+    // Coding fields
+    startDate: {
+      type: Date,
+      default: Date.now,
+    },
+    passingMarks: {
+      type: Number,
+      default: 0,
+    },
+    instructions: {
+      type: String,
+      default: '',
     },
   },
   {
