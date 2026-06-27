@@ -25,6 +25,27 @@ export const getLeaderboard = async (req, res, next) => {
         throw new Error('Test not found');
       }
 
+      // Find previous published test in the same batch
+      const previousTest = await Test.findOne({
+        batch: test.batch,
+        status: 'published',
+        createdAt: { $lt: test.createdAt }
+      }).sort({ createdAt: -1 });
+
+      const prevScoresMap = {};
+      if (previousTest) {
+        const prevAttempts = await Attempt.find({
+          test: previousTest._id,
+          status: { $in: ['submitted', 'graded'] }
+        });
+        prevAttempts.forEach((att) => {
+          if (att.student) {
+            const pct = (att.marksObtained / previousTest.totalMarks) * 100;
+            prevScoresMap[att.student.toString()] = Number(pct.toFixed(1));
+          }
+        });
+      }
+
       const attempts = await Attempt.find(attemptQuery)
         .populate('student', 'name email avatar')
         .sort({ marksObtained: -1, submittedAt: 1 });
@@ -36,6 +57,11 @@ export const getLeaderboard = async (req, res, next) => {
         if (percentage === 100) badge = 'gold';
         else if (percentage >= 90) badge = 'silver';
 
+        const sId = att.student?._id ? att.student._id.toString() : '';
+        const prevPercentage = sId && prevScoresMap[sId] !== undefined ? prevScoresMap[sId] : null;
+        const currentPercentage = Number(percentage.toFixed(1));
+        const improvement = prevPercentage !== null ? Number((currentPercentage - prevPercentage).toFixed(1)) : null;
+
         return {
           rank: index + 1,
           studentName: att.student?.name || 'Deleted Student',
@@ -43,8 +69,10 @@ export const getLeaderboard = async (req, res, next) => {
           studentId: att.student?._id || null,
           score: att.marksObtained,
           maxScore: test.totalMarks,
-          percentage: Number(percentage.toFixed(1)),
+          percentage: currentPercentage,
           badge: badge,
+          prevPercentage,
+          improvement,
         };
       });
 
