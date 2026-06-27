@@ -18,10 +18,10 @@ export const registerUser = async (req, res, next) => {
       throw new Error('User already exists');
     }
 
-    // Set role. Default to student. If admin, check if first user or require registration approval.
-    const userRole = role === 'admin' ? 'admin' : 'student';
-    // Admins are approved automatically; students must join a batch/wait for approval.
-    const status = userRole === 'admin' ? 'approved' : 'pending';
+    // Set role. Public registration only allows creating student accounts.
+    const userRole = 'student';
+    // Students must join a batch/wait for approval.
+    const status = 'pending';
 
     const user = await User.create({
       name,
