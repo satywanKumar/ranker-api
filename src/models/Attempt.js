@@ -65,6 +65,12 @@ const attemptSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    // Time spent on each question (questionId -> time in seconds)
+    timeSpent: {
+      type: Map,
+      of: Number,
+      default: {},
+    },
     submittedAt: {
       type: Date,
     },

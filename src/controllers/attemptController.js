@@ -111,6 +111,9 @@ export const saveAttemptProgress = async (req, res, next) => {
     }
 
     attempt.answers = answers;
+    if (req.body.timeSpent) {
+      attempt.timeSpent = req.body.timeSpent;
+    }
     await attempt.save();
 
     res.json({ message: 'Progress saved successfully', attempt });
@@ -528,6 +531,10 @@ export const saveCodingProgress = async (req, res, next) => {
       language,
       status: currentSub.status || 'Pending',
     });
+
+    if (req.body.timeSpent) {
+      attempt.timeSpent = req.body.timeSpent;
+    }
 
     attempt.markModified('codingSubmissions');
     await attempt.save();
